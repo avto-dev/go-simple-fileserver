@@ -1,0 +1,12 @@
+# IDEs
+/nbproject
+/.idea
+/.vscode
+
+# Temp dirs & trash
+/temp
+/tmp
+.DS_Store
+*.cache
+/cover*.*
+/go.sum
