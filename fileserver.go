@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,10 +24,14 @@ const (
 	defaultCacheMaxItems        = 64
 )
 
+type ErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, fs *FileServer, errorCode int) (doNotContinue bool)
+
 type FileServer struct {
-	Settings             Settings
-	Cache                cache.Cacher // nil, if caching disabled
-	FallbackErrorContent string
+	Settings              Settings
+	Cache                 cache.Cacher // nil, if caching disabled
+	FallbackErrorContent  string
+	ErrorHandlers         []ErrorHandlerFunc
+	allowedHttpMethodsMap map[string]struct{} // fillable in runtime
 }
 
 type Settings struct {
@@ -39,8 +44,11 @@ type Settings struct {
 	// File name (relative path to the file) that will be used as error page template.
 	ErrorFileName string
 
-	// Respond direct index file request with redirection to root (`example.com/index.html` -> `example.com/`).
+	// Respond "index file" request with redirection to the root (`example.com/index.html` -> `example.com/`).
 	RedirectIndexFileToRoot bool
+
+	// Allowed HTTP methods (eg.: `http.MethodGet`).
+	AllowedHttpMethods []string
 
 	// Enables caching engine.
 	CacheEnabled bool
@@ -80,6 +88,10 @@ func NewFileServer(s Settings) (*FileServer, error) {
 		s.CacheMaxItems = defaultCacheMaxItems
 	}
 
+	if len(s.AllowedHttpMethods) == 0 {
+		s.AllowedHttpMethods = append(s.AllowedHttpMethods, http.MethodGet)
+	}
+
 	fs := &FileServer{
 		Settings:             s,
 		FallbackErrorContent: defaultFallbackErrorContent,
@@ -89,6 +101,11 @@ func NewFileServer(s Settings) (*FileServer, error) {
 		fs.Cache = cache.NewInMemoryCache(s.CacheTTL / 2)
 	}
 
+	fs.ErrorHandlers = []ErrorHandlerFunc{
+		JSONErrorHandler(),
+		StaticHtmlPageErrorHandler(),
+	}
+
 	return fs, nil
 }
 
@@ -96,11 +113,44 @@ func (fs *FileServer) cacheAvailable() bool {
 	return fs.Settings.CacheEnabled && fs.Cache != nil
 }
 
-func (fs *FileServer) handleError(errorCode int, w http.ResponseWriter, r *http.Request) {
-	//
+func (fs *FileServer) handleError(w http.ResponseWriter, r *http.Request, errorCode int) {
+	if fs.ErrorHandlers != nil && len(fs.ErrorHandlers) > 0 {
+		for _, handler := range fs.ErrorHandlers {
+			if handler(w, r, fs, errorCode) {
+				return
+			}
+		}
+	}
+
+	// fallback
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(errorCode)
+
+	_, _ = fmt.Fprint(w, PrepareErrorContent(fs.FallbackErrorContent, errorCode))
+}
+
+func (fs *FileServer) methodIsAllowed(method string) bool {
+	if fs.allowedHttpMethodsMap == nil {
+		// burn allowed methods map for fast checking
+		fs.allowedHttpMethodsMap = make(map[string]struct{})
+
+		for _, v := range fs.Settings.AllowedHttpMethods {
+			fs.allowedHttpMethodsMap[v] = struct{}{}
+		}
+	}
+
+	_, found := fs.allowedHttpMethodsMap[method]
+
+	return found
 }
 
 func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !fs.methodIsAllowed(r.Method) {
+		fs.handleError(w, r, http.StatusMethodNotAllowed)
+
+		return
+	}
+
 	if fs.Settings.RedirectIndexFileToRoot && len(fs.Settings.IndexFileName) > 0 {
 		// redirect .../index.html to .../
 		if strings.HasSuffix(r.URL.Path, "/"+fs.Settings.IndexFileName) {
@@ -118,7 +168,7 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// if directory requested (or server root) - add index file name
-	if urlPath[len(urlPath)-1] == '/' {
+	if len(fs.Settings.IndexFileName) > 0 && urlPath[len(urlPath)-1] == '/' {
 		urlPath += fs.Settings.IndexFileName
 	}
 
@@ -144,7 +194,6 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// put file content into cache, if possible
 			if fs.cacheAvailable() &&
 				fs.Cache.Count() < fs.Settings.CacheMaxItems &&
-				stat.Size() > 0 &&
 				stat.Size() <= fs.Settings.CacheMaxFileSize {
 				if data, err := ioutil.ReadAll(file); err == nil {
 					fileContent = bytes.NewReader(data)
@@ -164,185 +213,30 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			return
 		} else {
-			fs.handleError(http.StatusInternalServerError, w, r)
+			fs.handleError(w, r, http.StatusInternalServerError)
 
 			return
 		}
 	}
 
-	fs.handleError(http.StatusNotFound, w, r)
+	fs.handleError(w, r, http.StatusNotFound)
 }
 
-//import (
-//	"encoding/json"
-//	"fmt"
-//	"io"
-//	"net/http"
-//	"os"
-//	"path"
-//	"path/filepath"
-//	"strings"
-//	"time"
-//)
-//
-//// this HTML content will be used as fallback content for 404 response.
-//const fallback404content = "<html><body><h1>ERROR 404</h1><h2>Requested file was not found</h2></body></html>"
-//
-//type json404error struct {
-//	Code    int    `json:"code"`
-//	Message string `json:"message"`
-//}
-//
-//type (
-//	// FileNotFoundHandler handle requests, when requested file was not found on server
-//	FileNotFoundHandler func(*FileServer, http.ResponseWriter, *http.Request) (makeStop bool)
-//
-//	Settings struct {
-//		Root         http.Dir
-//		IndexFile    string
-//		Error404file string
-//	}
-//
-//	FileServer struct {
-//		Settings         Settings
-//		NotFoundHandlers []FileNotFoundHandler // optional
-//	}
-//)
-//
-//// NewFileServer creates new file server.
-//func NewFileServer(settings Settings) *FileServer {
-//	return &FileServer{
-//		Settings: settings,
-//		NotFoundHandlers: []FileNotFoundHandler{
-//			JSON404errorHandler(),
-//			StaticHtmlPage404errorHandler(),
-//		},
-//	}
-//}
-//
-//// Serve requests to the "public" files and directories.
-//func (fileServer *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-//	// redirect .../index.html to .../
-//	if strings.HasSuffix(r.URL.Path, "/"+fileServer.Settings.IndexFile) {
-//		http.Redirect(w, r, r.URL.Path[0:len(r.URL.Path)-len(fileServer.Settings.IndexFile)], http.StatusMovedPermanently)
-//		return
-//	}
-//
-//	// if empty, set current directory
-//	dir := string(fileServer.Settings.Root)
-//	if dir == "" {
-//		dir = "."
-//	}
-//
-//	// add prefix and clean
-//	upath := r.URL.Path
-//	if !strings.HasPrefix(upath, "/") {
-//		upath = "/" + upath
-//		r.URL.Path = upath
-//	}
-//	// add index file name if requested directory (or server root)
-//	if upath[len(upath)-1] == '/' {
-//		upath += fileServer.Settings.IndexFile
-//	}
-//	// make path clean
-//	upath = path.Clean(upath)
-//
-//	// path to file
-//	name := path.Join(dir, filepath.FromSlash(upath))
-//
-//	// if files server root directory is set - try to find file and serve them
-//	if len(fileServer.Settings.Root) > 0 {
-//		// check for file exists
-//		if f, err := os.Open(name); err == nil {
-//			// file exists and opened
-//			defer func() {
-//				if err := f.Close(); err != nil {
-//					panic(err)
-//				}
-//			}()
-//			// file (or directory) exists
-//			if stat, statErr := os.Stat(name); statErr == nil && stat.Mode().IsRegular() {
-//				// requested file is file (not directory)
-//				var modTime time.Time
-//				// Try to extract file modified time
-//				if info, err := f.Stat(); err == nil {
-//					modTime = info.ModTime()
-//				} else {
-//					modTime = time.Now() // fallback
-//				}
-//				// serve fie content
-//				http.ServeContent(w, r, filepath.Base(upath), modTime, f)
-//
-//				return
-//			}
-//		}
-//	}
-//
-//	fileServer.handle404(w, r)
-//}
-//
-//func (fileServer *FileServer) handle404(w http.ResponseWriter, r *http.Request) {
-//	// If all tries for content serving above has been failed - file was not found (HTTP 404)
-//	if fileServer.NotFoundHandlers != nil || len(fileServer.NotFoundHandlers) == 0 {
-//		for _, handler := range fileServer.NotFoundHandlers {
-//			if handler(fileServer, w, r) {
-//				return
-//			}
-//		}
-//	}
-//
-//	// fallback
-//	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-//	w.WriteHeader(http.StatusNotFound)
-//
-//	_, _ = fmt.Fprint(w, fallback404content)
-//}
-//
-//func JSON404errorHandler() FileNotFoundHandler {
-//	return func(fs *FileServer, w http.ResponseWriter, r *http.Request) bool {
-//		if strings.Contains(r.Header.Get("Accept"), "json") {
-//			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-//			w.WriteHeader(http.StatusNotFound)
-//
-//			_ = json.NewEncoder(w).Encode(json404error{
-//				Code:    http.StatusNotFound,
-//				Message: "Not found",
-//			})
-//
-//			return true
-//		}
-//
-//		return false
-//	}
-//}
-//
-//func StaticHtmlPage404errorHandler() FileNotFoundHandler {
-//	return func(fs *FileServer, w http.ResponseWriter, r *http.Request) bool {
-//		if len(fs.Settings.Root) > 0 {
-//			var errPage = path.Join(string(fs.Settings.Root), fs.Settings.Error404file)
-//			if f, err := os.Open(errPage); err == nil {
-//				// file exists and opened
-//				defer func() {
-//					if err := f.Close(); err != nil {
-//						panic(err)
-//					}
-//				}()
-//
-//				// file (or directory) exists
-//				if stat, statErr := os.Stat(errPage); statErr == nil && stat.Mode().IsRegular() {
-//					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-//					w.WriteHeader(http.StatusNotFound)
-//
-//					// requested file is file (not directory)
-//					if _, writeErr := io.Copy(w, f); writeErr != nil {
-//						panic(writeErr)
-//					}
-//
-//					return true
-//				}
-//			}
-//		}
-//
-//		return false
-//	}
-//}
+func PrepareErrorContent(in string, errorCode int) string {
+	return replaceAllInString(in, map[string]string{
+		"code":    strconv.Itoa(errorCode),
+		"message": http.StatusText(errorCode),
+	})
+}
+
+func replaceAllInString(in string, patterns map[string]string) string {
+	if patterns == nil || len(patterns) == 0 {
+		return in
+	}
+
+	for k, v := range patterns {
+		in = strings.ReplaceAll(in, fmt.Sprintf("{{ %s }}", k), v)
+	}
+
+	return in
+}
