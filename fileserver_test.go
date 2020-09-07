@@ -2,14 +2,56 @@ package fileserver
 
 import (
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func RandStringRunes(t *testing.T, n int) string {
+	t.Helper()
+
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+
+	return string(b)
+}
+
+func TestNewFileServer_WrongDirectoryError(t *testing.T) {
+	fs, err := NewFileServer(Settings{
+		FilesRoot: RandStringRunes(t, 32),
+	})
+
+	assert.Nil(t, fs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not exists")
+
+	tmpDir, _ := ioutil.TempDir("", "test-")
+	defer func(d string) { assert.NoError(t, os.RemoveAll(d)) }(tmpDir)
+	file, _ := os.Create(filepath.Join(tmpDir, "foo"))
+	file.Close()
+
+	fs, err = NewFileServer(Settings{
+		FilesRoot: file.Name(),
+	})
+
+	assert.Nil(t, fs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not directory")
+}
 
 func TestFileServer_ServeHTTP(t *testing.T) {
 	var cases = []struct {
@@ -214,7 +256,7 @@ func TestFileServer_ServeHTTP(t *testing.T) {
 			assert.NoError(t, fsErr)
 
 			if tt.giveRequestMethod == "" { // setup default HTTP request method
-				tt.giveRequestMethod = http.MethodGet
+				tt.giveRequestMethod = fs.Settings.AllowedHttpMethods[0]
 			}
 
 			var (
@@ -253,4 +295,47 @@ func TestFileServer_ServeHTTP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFileServer_CacheUsage(t *testing.T) {
+	// create dir
+	tmpDir, _ := ioutil.TempDir("", "test-cache-")
+	defer func(d string) { assert.NoError(t, os.RemoveAll(d)) }(tmpDir)
+
+	// create files
+	file, _ := os.Create(filepath.Join(tmpDir, "test"))
+	_, _ = file.Write([]byte("test content"))
+	file.Close()
+
+	cacheTTL := time.Millisecond * 5
+
+	fs, _ := NewFileServer(Settings{
+		FilesRoot:     tmpDir,
+		ErrorFileName: "error.html",
+		CacheEnabled:  true,
+		CacheTTL:      cacheTTL,
+	})
+
+	var (
+		req, _ = http.NewRequest(http.MethodGet, "/test", nil)
+		rr     = httptest.NewRecorder()
+	)
+
+	fs.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "test content", rr.Body.String()) // content from `./test`
+	assert.NoError(t, os.Remove(filepath.Join(tmpDir, "test")))
+
+	rr = httptest.NewRecorder()
+	fs.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "test content", rr.Body.String()) // content from cache
+
+	time.Sleep(cacheTTL) // cache must be expired after this line
+
+	rr = httptest.NewRecorder()
+	fs.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Not Found") // cache expired and now file not foud
 }

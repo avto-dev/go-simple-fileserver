@@ -9,7 +9,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +42,9 @@ type Settings struct {
 
 	// File name (relative path to the file) that will be used as error page template.
 	ErrorFileName string
+
+	// Deny **direct** access to the files with names, defined here (eg.: `error.html`, `.htaccess`, `.htpasswd`).
+	ForbidAccessFileNames []string // TODO: Implement this
 
 	// Respond "index file" request with redirection to the root (`example.com/index.html` -> `example.com/`).
 	RedirectIndexFileToRoot bool
@@ -109,7 +111,7 @@ func NewFileServer(s Settings) (*FileServer, error) {
 	return fs, nil
 }
 
-func (fs *FileServer) cacheAvailable() bool {
+func (fs *FileServer) CacheAvailable() bool {
 	return fs.Settings.CacheEnabled && fs.Cache != nil
 }
 
@@ -126,7 +128,7 @@ func (fs *FileServer) handleError(w http.ResponseWriter, r *http.Request, errorC
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(errorCode)
 
-	_, _ = fmt.Fprint(w, PrepareErrorContent(fs.FallbackErrorContent, errorCode))
+	_, _ = w.Write([]byte(ErrorPageTemplate(fs.FallbackErrorContent).Build(errorCode)))
 }
 
 func (fs *FileServer) methodIsAllowed(method string) bool {
@@ -176,7 +178,7 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	filePath := path.Join(fs.Settings.FilesRoot, filepath.FromSlash(path.Clean(urlPath)))
 
 	// look for response in cache
-	if fs.cacheAvailable() {
+	if fs.CacheAvailable() {
 		if cached, cacheHit := fs.Cache.Get(filePath); cacheHit {
 			http.ServeContent(w, r, filepath.Base(filePath), cached.ModifiedTime, cached.Content)
 
@@ -191,8 +193,8 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			var fileContent io.ReadSeeker
 
-			// put file content into cache, if possible
-			if fs.cacheAvailable() &&
+			// put file content into cache, if it is possible
+			if fs.CacheAvailable() &&
 				fs.Cache.Count() < fs.Settings.CacheMaxItems &&
 				stat.Size() <= fs.Settings.CacheMaxFileSize {
 				if data, err := ioutil.ReadAll(file); err == nil {
@@ -220,23 +222,4 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fs.handleError(w, r, http.StatusNotFound)
-}
-
-func PrepareErrorContent(in string, errorCode int) string {
-	return replaceAllInString(in, map[string]string{
-		"code":    strconv.Itoa(errorCode),
-		"message": http.StatusText(errorCode),
-	})
-}
-
-func replaceAllInString(in string, patterns map[string]string) string {
-	if patterns == nil || len(patterns) == 0 {
-		return in
-	}
-
-	for k, v := range patterns {
-		in = strings.ReplaceAll(in, fmt.Sprintf("{{ %s }}", k), v)
-	}
-
-	return in
 }
