@@ -85,3 +85,22 @@ jobs: # Docs: <https://help.github.com/en/articles/workflow-syntax-for-github-ac
           token: ${{ secrets.CODECOV_TOKEN }}
           file: /tmp/coverage.txt
           fail_ci_if_error: false
+
+  example:
+    name: Run example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.14
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Run example server
+        working-directory: examples
+        run: go run . &
+
+      - name: Send simple HTTP request
+        run: curl -v --fail http://127.0.0.1:9000/
