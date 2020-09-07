@@ -21,14 +21,14 @@ fmt: ## Run source code formatter tools
 	docker-compose run $(DC_RUN_ARGS) app gofmt -s -w -d .
 
 lint: ## Run source code linters
-	docker-compose run $(DC_RUN_ARGS) --no-deps app go vet ./...
-	docker-compose run --rm --no-deps golint golangci-lint run
+	docker-compose run $(DC_RUN_ARGS) app go vet ./...
+	docker-compose run --rm golint golangci-lint run
 
 test: ## Run tests
-	docker-compose run $(DC_RUN_ARGS) --no-deps app go test -v -race -timeout 5s ./...
+	docker-compose run $(DC_RUN_ARGS) app go test -v -race -timeout 5s ./...
 
 cover: ## Run tests with coverage report
-	docker-compose run $(DC_RUN_ARGS) --no-deps app sh -c 'go test -race -covermode=atomic -coverprofile /tmp/cp.out ./... && go tool cover -html=/tmp/cp.out -o ./coverage.html'
+	docker-compose run $(DC_RUN_ARGS) app sh -c 'go test -race -covermode=atomic -coverprofile /tmp/cp.out ./... && go tool cover -html=/tmp/cp.out -o ./coverage.html'
 	-sensible-browser ./coverage.html && sleep 2 && rm -f ./coverage.html
 
 shell: ## Start shell into container with golang
