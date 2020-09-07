@@ -13,18 +13,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func init() {
+func init() { //nolint:gochecknoinits
 	rand.Seed(time.Now().UnixNano())
 }
 
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") //nolint:gochecknoglobals
 
 func RandStringRunes(t *testing.T, n int) string {
 	t.Helper()
 
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		b[i] = letterRunes[rand.Intn(len(letterRunes))] //nolint:gosec
 	}
 
 	return string(b)
@@ -86,7 +86,7 @@ func TestFileServer_ServeHTTP(t *testing.T) {
 		{
 			name: "disallowed HTTP method is used",
 			giveSettings: Settings{
-				AllowedHttpMethods: []string{http.MethodPost},
+				AllowedHTTPMethods: []string{http.MethodPost},
 			},
 			giveRequestMethod:      http.MethodGet,
 			giveRequestURI:         "/",
@@ -96,7 +96,7 @@ func TestFileServer_ServeHTTP(t *testing.T) {
 		{
 			name: "disallowed HTTP method for existing file is used",
 			giveSettings: Settings{
-				AllowedHttpMethods: []string{http.MethodPost, http.MethodDelete},
+				AllowedHTTPMethods: []string{http.MethodPost, http.MethodDelete},
 			},
 			giveRequestMethod: http.MethodGet,
 			giveRequestURI:    "/test",
@@ -256,7 +256,7 @@ func TestFileServer_ServeHTTP(t *testing.T) {
 			assert.NoError(t, fsErr)
 
 			if tt.giveRequestMethod == "" { // setup default HTTP request method
-				tt.giveRequestMethod = fs.Settings.AllowedHttpMethods[0]
+				tt.giveRequestMethod = fs.Settings.AllowedHTTPMethods[0]
 			}
 
 			var (

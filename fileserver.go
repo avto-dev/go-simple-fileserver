@@ -23,16 +23,28 @@ const (
 	defaultCacheMaxItems        = 64
 )
 
+// ErrorHandlerFunc is used as handler for errors processing. If func return `true` - next handler will be NOT executed.
 type ErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, fs *FileServer, errorCode int) (doNotContinue bool)
 
+// FileServer is a main file server structure (implements `http.Handler` interface).
 type FileServer struct {
-	Settings              Settings
-	Cache                 cache.Cacher // nil, if caching disabled
-	FallbackErrorContent  string
-	ErrorHandlers         []ErrorHandlerFunc
-	allowedHttpMethodsMap map[string]struct{} // fillable in runtime
+	// Server settings (some of them can be changed in runtime).
+	Settings Settings
+
+	// Cacher instance.
+	Cache cache.Cacher // nil, if caching disabled
+
+	// If all error handlers fails - this content will be used as fallback for error page generating.
+	FallbackErrorContent string
+
+	// Error handlers stack.
+	ErrorHandlers []ErrorHandlerFunc
+
+	// Allowed HTTP methods map (is used in performance reasons).
+	allowedHTTPMethodsMap map[string]struct{} // fillable in runtime
 }
 
+// Settings describes file server options.
 type Settings struct {
 	// Directory path, where files for serving is located.
 	FilesRoot string
@@ -43,14 +55,11 @@ type Settings struct {
 	// File name (relative path to the file) that will be used as error page template.
 	ErrorFileName string
 
-	// Deny **direct** access to the files with names, defined here (eg.: `error.html`, `.htaccess`, `.htpasswd`).
-	ForbidAccessFileNames []string // TODO: Implement this
-
 	// Respond "index file" request with redirection to the root (`example.com/index.html` -> `example.com/`).
 	RedirectIndexFileToRoot bool
 
 	// Allowed HTTP methods (eg.: `http.MethodGet`).
-	AllowedHttpMethods []string
+	AllowedHTTPMethods []string
 
 	// Enables caching engine.
 	CacheEnabled bool
@@ -65,6 +74,7 @@ type Settings struct {
 	CacheMaxItems uint32
 }
 
+// NewFileServer creates new file server with default settings. Feel free to change default behavior.
 func NewFileServer(s Settings) (*FileServer, error) {
 	if info, err := os.Stat(s.FilesRoot); err != nil {
 		if os.IsNotExist(err) {
@@ -90,8 +100,8 @@ func NewFileServer(s Settings) (*FileServer, error) {
 		s.CacheMaxItems = defaultCacheMaxItems
 	}
 
-	if len(s.AllowedHttpMethods) == 0 {
-		s.AllowedHttpMethods = append(s.AllowedHttpMethods, http.MethodGet)
+	if len(s.AllowedHTTPMethods) == 0 {
+		s.AllowedHTTPMethods = append(s.AllowedHTTPMethods, http.MethodGet)
 	}
 
 	fs := &FileServer{
@@ -100,17 +110,18 @@ func NewFileServer(s Settings) (*FileServer, error) {
 	}
 
 	if s.CacheEnabled {
-		fs.Cache = cache.NewInMemoryCache(s.CacheTTL / 2)
+		fs.Cache = cache.NewInMemoryCache(s.CacheTTL / 2) //nolint:gomnd
 	}
 
 	fs.ErrorHandlers = []ErrorHandlerFunc{
 		JSONErrorHandler(),
-		StaticHtmlPageErrorHandler(),
+		StaticHTMLPageErrorHandler(),
 	}
 
 	return fs, nil
 }
 
+// CacheAvailable checks cache availability.
 func (fs *FileServer) CacheAvailable() bool {
 	return fs.Settings.CacheEnabled && fs.Cache != nil
 }
@@ -132,21 +143,22 @@ func (fs *FileServer) handleError(w http.ResponseWriter, r *http.Request, errorC
 }
 
 func (fs *FileServer) methodIsAllowed(method string) bool {
-	if fs.allowedHttpMethodsMap == nil {
+	if fs.allowedHTTPMethodsMap == nil {
 		// burn allowed methods map for fast checking
-		fs.allowedHttpMethodsMap = make(map[string]struct{})
+		fs.allowedHTTPMethodsMap = make(map[string]struct{})
 
-		for _, v := range fs.Settings.AllowedHttpMethods {
-			fs.allowedHttpMethodsMap[v] = struct{}{}
+		for _, v := range fs.Settings.AllowedHTTPMethods {
+			fs.allowedHTTPMethodsMap[v] = struct{}{}
 		}
 	}
 
-	_, found := fs.allowedHttpMethodsMap[method]
+	_, found := fs.allowedHTTPMethodsMap[method]
 
 	return found
 }
 
-func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP responds to an HTTP request.
+func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) { //nolint:funlen,gocognit,gocyclo
 	if !fs.methodIsAllowed(r.Method) {
 		fs.handleError(w, r, http.StatusMethodNotAllowed)
 
@@ -214,11 +226,11 @@ func (fs *FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.ServeContent(w, r, filepath.Base(filePath), stat.ModTime(), fileContent)
 
 			return
-		} else {
-			fs.handleError(w, r, http.StatusInternalServerError)
-
-			return
 		}
+
+		fs.handleError(w, r, http.StatusInternalServerError)
+
+		return
 	}
 
 	fs.handleError(w, r, http.StatusNotFound)

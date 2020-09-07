@@ -1,7 +1,6 @@
 package fileserver
 
 import (
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestErrorPageTemplate_String(t *testing.T) {
@@ -53,12 +54,12 @@ func TestStaticHtmlPageErrorHandler(t *testing.T) {
 	cacheTTL := time.Millisecond * 5
 
 	fs, _ := NewFileServer(Settings{
-		FilesRoot: tmpDir,
+		FilesRoot:    tmpDir,
 		CacheEnabled: true,
-		CacheTTL: cacheTTL,
+		CacheTTL:     cacheTTL,
 	})
 	assert.NotNil(t, fs)
-	handler := StaticHtmlPageErrorHandler()
+	handler := StaticHTMLPageErrorHandler()
 
 	var (
 		req, _ = http.NewRequest(http.MethodGet, "", nil)

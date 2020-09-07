@@ -30,7 +30,7 @@ func TestInMemoryCache_CRD(t *testing.T) {
 	assert.Equal(t, now, item.ModifiedTime)
 
 	buf := make([]byte, len(data))
-	item.Content.Read(buf)
+	_, _ = item.Content.Read(buf)
 
 	assert.Equal(t, []byte("abc"), buf)
 	assert.True(t, exists)
