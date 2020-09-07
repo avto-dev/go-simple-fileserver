@@ -102,5 +102,8 @@ jobs: # Docs: <https://help.github.com/en/articles/workflow-syntax-for-github-ac
         working-directory: examples
         run: go run . &
 
+      - name: Pause
+        run: sleep 2
+
       - name: Send simple HTTP request
         run: curl -v --fail http://127.0.0.1:9000/
