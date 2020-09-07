@@ -98,6 +98,10 @@ jobs: # Docs: <https://help.github.com/en/articles/workflow-syntax-for-github-ac
       - name: Check out code
         uses: actions/checkout@v2
 
+      - name: Download dependencies
+        working-directory: examples
+        run: go get
+
       - name: Run example server
         working-directory: examples
         run: go run . &
