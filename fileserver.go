@@ -80,6 +80,8 @@ func NewFileServer(s Settings) (*FileServer, error) {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf(`directory "%s" does not exists`, s.FilesRoot)
 		}
+
+		return nil, err
 	} else if !info.IsDir() {
 		return nil, fmt.Errorf(`"%s" is not directory`, s.FilesRoot)
 	}

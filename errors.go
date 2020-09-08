@@ -24,7 +24,7 @@ func (t ErrorPageTemplate) String() string { return string(t) }
 
 // Build makes registered patterns replacing.
 func (t ErrorPageTemplate) Build(errorCode int) string {
-	var out string = t.String()
+	out := t.String()
 
 	for k, v := range map[string]string{
 		"code":    strconv.Itoa(errorCode),
