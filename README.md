@@ -17,6 +17,14 @@ This package provides basic file server functionality with:
 
 Most use-case is [SPA](https://en.wikipedia.org/wiki/Single-page_application) assets serving.
 
+## Installation
+
+To install package, use `go get`:
+
+```bash
+$ go get github.com/avto-dev/go-simple-fileserver
+```
+
 ## Example
 
 ```go
