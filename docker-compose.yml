@@ -1,0 +1,24 @@
+version: '3.4'
+
+volumes:
+  tmp-data:
+
+services:
+  app:
+    image: golang:1.14-stretch # Image page: <https://hub.docker.com/_/golang>
+    working_dir: /src
+    environment:
+      HOME: /tmp
+      GOPATH: /tmp
+    volumes:
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+      - .:/src:cached
+      - tmp-data:/tmp:cached
+
+  golint: # This is NOT application service
+    image: golangci/golangci-lint:v1.30-alpine # Image page: <https://hub.docker.com/r/golangci/golangci-lint>
+    volumes:
+      - .:/app:ro
+    working_dir: /app
+    command: /bin/true
